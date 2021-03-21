@@ -1,10 +1,14 @@
 #include <Windows.h>
 #include <functional> 
 #include <GL/gl.h>
-#include "kiero/kiero.h"
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
 #include "imgui/imgui_impl_opengl2.h"
+#include "imgui_hook_config.h"
+
+#ifdef IMGUIHOOK_USE_MINHOOK
+#include "MinHook.h"
+#endif
 
 #define _CAST(t,v)	reinterpret_cast<t>(v)
 #define _VOID_1(v)	std::function<void(v)>
@@ -20,6 +24,9 @@ typedef LRESULT(CALLBACK* WNDPROC) (
 	IN  WPARAM wParam,
 	IN  LPARAM lParam
 );
+
+typedef bool(*hookFn_t)(void* func, void* hook, void** orig);
+typedef void(*unhookFn_t)(void* func);
 
 extern LRESULT ImGui_ImplWin32_WndProcHandler(
 	HWND hWnd, 
@@ -40,6 +47,7 @@ namespace ImGuiHook
 	static HGLRC      g_WglContext;
 	static bool	      initImGui = false;
 	static _VOID_1()  RenderMain;
+	static unhookFn_t unhookFn;
 
 	// WndProc callback ImGui handler
 	LRESULT CALLBACK h_WndProc(
@@ -140,27 +148,38 @@ namespace ImGuiHook
 	}
 
 	// Initialise hook
-	bool InitHook()
+	bool InitHook(hookFn_t hook)
 	{
-		if (kiero::init(kiero::RenderType::Auto) == kiero::Status::Success)
-			return kiero::bind(get_wglSwapBuffers(), (void**)&o_wglSwapBuffers, h_wglSwapBuffers) == kiero::Status::Success;
-
-		return false;
+		return hook(get_wglSwapBuffers(), h_wglSwapBuffers, (void**) &o_wglSwapBuffers);
 	}
 
 	// Main load function
 	bool Load(
-		IN  _VOID_1() render)
-	{
+		IN  _VOID_1() render,
+		IN  hookFn_t hook,
+		IN  unhookFn_t unhook
+	) {
 		RenderMain = render;
+		unhookFn = unhook;
 		return InitHook();
 	}
 
 	// Main unload function
 	void Unload()
 	{
-		kiero::shutdown();
+		unhook();
 	}
+
+#ifdef IMGUIHOOK_USE_MINHOOK
+	static bool HookWithMinhook(void* func, void* hook, void** orig) {
+		if(MH_CreateHook(func, hook, orig) != MH_OK) return false;
+		if(MH_EnableHook(func) != MH_OK) return false;
+	}
+	// Load via MinHook
+	void MinhookLoad(_VOID_1() render) {
+		Load(render, hook, MH_DisableHook);
+	}
+#endif
 }
 
 
